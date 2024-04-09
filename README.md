@@ -28,4 +28,4 @@ OGA™Hub API
 
 The Asset Browser application can be used to browse all of the assets that were uploaded to OGA™Hub via the API.  For more information on how to upload your own assets to test, visit https://ogahub.com/API/Docs.  From there you can read the docs and perform live demos of the API calls.
 
-Visit the [OGA™ Developer Wiki](https://github.com/NineTalesDigital/ogalib/wiki) to follow a tutorial about getting started right away.
+Visit the [OGA™ Developer Wiki](https://github.com/NineTalesDigital/ogalib/wiki/OGA%E2%84%A2-Developer-Wiki) to follow a tutorial about getting started right away.
