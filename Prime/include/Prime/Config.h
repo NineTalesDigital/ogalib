@@ -208,12 +208,15 @@ extern void GetContentRaw(const std::string& uri, const json& info, const std::f
 extern void MapContentURI(const std::string& mappedURI, const std::string& uri);
 extern const std::string& GetMapppedContentURI(const std::string& uri);
 extern void GetPackFilenames(const std::string& uri, Stack<std::string>& filenames);
+extern bool LockSetjmpMutex();
+extern bool UnlockSetjmpMutex();
 
 extern bool IsFormatJSON(const void* data, size_t dataSize, const json& info);
 extern bool IsFormatJSON(const void* data, size_t dataSize, const json& info, json& output);
 extern bool IsFormatJSONWithValue(const void* data, size_t dataSize, const json& info, const std::string& key, std::string& value);
 extern bool IsFormatJSONWithArray(const void* data, size_t dataSize, const json& info, const std::string& key);
 extern bool IsFormatPNG(const void* data, size_t dataSize, const json& info);
+extern bool IsFormatJPEG(const void* data, size_t dataSize, const json& info);
 extern bool IsFormatBC(const void* data, size_t dataSize, const json& info);
 extern bool IsFormatGLTF(const void* data, size_t dataSize, const json& info);
 extern bool IsFormatFBX(const void* data, size_t dataSize, const json& info);

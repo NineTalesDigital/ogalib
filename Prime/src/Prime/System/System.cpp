@@ -40,9 +40,23 @@ SOFTWARE.
 #include <Prime/Rig/RigContent.h>
 #include <Prime/Font/FontContent.h>
 #include <png/png.h>
+#include <jpeg/jpeglib.h>
+#include <jpeg/jerror.h>
 #include <jsmn/jsmn.h>
 
 using namespace Prime;
+
+////////////////////////////////////////////////////////////////////////////////
+// Structs
+////////////////////////////////////////////////////////////////////////////////
+
+struct jpegErrorManager {
+  struct jpeg_error_mgr pub;
+  jmp_buf setjmp_buffer;
+};
+
+static char jpegLastErrorMsg[JMSG_LENGTH_MAX];
+static void jpegErrorExit(j_common_ptr cinfo);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Classes
@@ -78,6 +92,7 @@ ContentPPF::~ContentPPF() {
 // Variables
 ////////////////////////////////////////////////////////////////////////////////
 
+static ThreadMutex* setjmpMutex = nullptr;
 static ThreadMutex* contentDataMutex = nullptr;
 static Dictionary<std::string, refptr<Content>> contentData;
 static Dictionary<std::string, bool> contentDataLoadingLocked;
@@ -308,11 +323,21 @@ void Prime::GetPackFilenames(const std::string& uri, Stack<std::string>& filenam
   }
 }
 
+bool Prime::LockSetjmpMutex() {
+  return setjmpMutex->Lock();
+}
+
+bool Prime::UnlockSetjmpMutex() {
+  return setjmpMutex->Unlock();
+}
+
 void Prime::InitContent() {
   contentDataMutex = new ThreadMutex("Content Data");
+  setjmpMutex = new ThreadMutex("setjmp", true);
 }
 
 void Prime::ShutdownContent() {
+  PrimeSafeDelete(setjmpMutex);
   PrimeSafeDelete(contentDataMutex);
 }
 
@@ -505,6 +530,28 @@ void Prime::GetContentByData(const std::string& uri, const void* data, size_t da
       OnContentLoadingDone(content, uri, locked, callback);
     });
   }
+  else if(IsFormatJPEG(data, dataSize, info)) {
+    bool locked = IncContentDataLoading(uri);
+    refptr<ImagemapContent> content;
+    if(locked) {
+      content = new ImagemapContent();
+    }
+
+    std::string dataCopy((const char*) data, dataSize);
+    new Job([=](Job& job) {
+      if(locked) {
+        if(content) {
+          SetupLoadingContent(content, uri, info);
+          content->Load(dataCopy.c_str(), dataCopy.size(), info);
+        }
+      }
+      else {
+        WaitForContentDataLoading(uri);
+      }
+    }, [=](Job& job) {
+      OnContentLoadingDone(content, uri, locked, callback);
+    });
+    }
   else if(IsFormatOTF(data, dataSize, info)) {
     bool locked = IncContentDataLoading(uri);
     refptr<FontContent> content;
@@ -845,6 +892,36 @@ bool Prime::IsFormatPNG(const void* data, size_t dataSize, const json& info) {
   return false;
 }
 
+bool Prime::IsFormatJPEG(const void* data, size_t dataSize, const json& info) {
+  if(data == nullptr)
+    return false;
+
+  LockSetjmpMutex();
+
+  struct jpeg_decompress_struct jpegInfo;
+  jpegErrorManager jerr;
+
+  jpegInfo.err = jpeg_std_error(&jerr.pub);
+  jerr.pub.error_exit = jpegErrorExit;
+
+  jpeg_create_decompress(&jpegInfo);
+
+  if(setjmp(jerr.setjmp_buffer)) {
+    // If we get here, the JPEG code has signaled an error.
+    jpeg_destroy_decompress(&jpegInfo);
+    UnlockSetjmpMutex();
+    return false;
+  }
+
+  jpeg_mem_src(&jpegInfo, (const unsigned char*) data, dataSize);
+  int result = jpeg_read_header(&jpegInfo, FALSE);
+  jpeg_destroy_decompress(&jpegInfo);
+
+  UnlockSetjmpMutex();
+
+  return result == JPEG_HEADER_OK;
+}
+
 bool Prime::IsFormatBC(const void* data, size_t dataSize, const json& info) {
   if(data == nullptr)
     return false;
@@ -912,4 +989,10 @@ bool Prime::IsFormatOTF(const void* data, size_t dataSize, const json& info) {
   }
 
   return false;
+}
+
+static void jpegErrorExit(j_common_ptr cinfo) {
+  jpegErrorManager* myerr = (jpegErrorManager*) cinfo->err;
+  (*(cinfo->err->format_message)) (cinfo, jpegLastErrorMsg);
+  longjmp(myerr->setjmp_buffer, 1);
 }

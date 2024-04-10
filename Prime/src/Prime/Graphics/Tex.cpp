@@ -34,6 +34,8 @@ SOFTWARE.
 #include <png/png.h>
 #include <png/pngstruct.h>
 #include <png/pnginfo.h>
+#include <jpeg/jpeglib.h>
+#include <jpeg/jerror.h>
 
 using namespace Prime;
 
@@ -46,6 +48,14 @@ typedef struct _PNGDataRead {
   size_t dataSize;
   size_t pos;
 } PNGDataRead;
+
+struct jpegErrorManager {
+  struct jpeg_error_mgr pub;
+  jmp_buf setjmp_buffer;
+};
+
+static char jpegLastErrorMsg[JMSG_LENGTH_MAX];
+static void jpegErrorExit(j_common_ptr cinfo);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Functions
@@ -495,13 +505,16 @@ void Tex::AddTexData(const std::string& name, const std::string& data, const jso
       }
     }
     else {
-      size_t dataSize = data.size();
-      if(dataSize >= 8) {
-        if(png_sig_cmp((png_bytep) data.c_str(), 0, 8) == 0) {
-          TexData* texData = new TexData();
-          if(texData && LoadPixelsFromPNG(data.c_str(), dataSize, *texData)) {
-            job.data["texData"] = texData;
-          }
+      if(IsFormatPNG(data.c_str(), data.size(), info)) {
+        TexData* texData = new TexData();
+        if(texData && LoadPixelsFromPNG(data.c_str(), data.size(), *texData)) {
+          job.data["texData"] = texData;
+        }
+      }
+      else if(IsFormatJPEG(data.c_str(), data.size(), info)) {
+        TexData* texData = new TexData();
+        if(texData && LoadPixelsFromJPEG(data.c_str(), data.size(), *texData)) {
+          job.data["texData"] = texData;
         }
       }
     }
@@ -534,6 +547,29 @@ void Tex::AddTexData(const std::string& name, const std::string& data, const jso
 
     DecRef();
   });
+}
+
+void Tex::AddTexData(const std::string& name, const TexData& data) {
+  PxRequireMainThread;
+
+  TexData* texData;
+
+  if(auto it = texDataLookup.Find(name)) {
+    texData = it.value();
+  }
+  else {
+    texData = new TexData();
+    if(texData) {
+      texDataLookup[name] = texData;
+    }
+  }
+
+  if(texData) {
+    *texData = data;
+    CacheInfo();
+    UnloadFromVRAM();
+    LoadIntoVRAM();
+  }
 }
 
 void Tex::RemoveTexData(const std::string& name) {
@@ -1109,6 +1145,7 @@ bool Tex::LoadPixelsFromPNG(const void* data, size_t dataSize, TexData& texData)
   PNGDataRead dr;
 
   if(dataSize < 8 || png_sig_cmp((png_bytep) data, 0, 8)) {
+    texData = 0;
     return false;
   }
 
@@ -1118,6 +1155,7 @@ bool Tex::LoadPixelsFromPNG(const void* data, size_t dataSize, TexData& texData)
   dr.pos = 0;
 
   if(png_sig_cmp((png_bytep) data, 0, 8)) {
+    texData = 0;
     dbgprintf("[Warning] Buffer does not contain valid PNG data.");
     return false;
   }
@@ -1126,12 +1164,14 @@ bool Tex::LoadPixelsFromPNG(const void* data, size_t dataSize, TexData& texData)
 
   png = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
   if(!png) {
+    texData = 0;
     dbgprintf("[Warning] Could not create PNG read struct.");
     return false;
   }
 
   pngInfo = png_create_info_struct(png);
   if(!pngInfo) {
+    texData = 0;
     png_destroy_read_struct(&png, nullptr, nullptr);
     dbgprintf("[Warning] Could not craete PNG info struct.");
     return false;
@@ -1146,6 +1186,7 @@ bool Tex::LoadPixelsFromPNG(const void* data, size_t dataSize, TexData& texData)
   texData.h = pngInfo->height;
 
   if(texData.w == 0 || texData.h == 0) {
+    texData = 0;
     png_destroy_read_struct(&png, &pngInfo, nullptr);
     return false;
   }
@@ -1193,8 +1234,8 @@ bool Tex::LoadPixelsFromPNG(const void* data, size_t dataSize, TexData& texData)
     texData.format = TexFormatR8;
   }
   else {
-    png_destroy_read_struct(&png, &pngInfo, nullptr);
     texData = 0;
+    png_destroy_read_struct(&png, &pngInfo, nullptr);
     dbgprintf("[Warning] Unsupported pixel size for texture format.");
     return false;
   }
@@ -1235,6 +1276,122 @@ bool Tex::LoadPixelsFromPNG(const void* data, size_t dataSize, TexData& texData)
   png_read_image(png, rows);
   png_destroy_read_struct(&png, &pngInfo, nullptr);
   free(rows);
+
+  return true;
+}
+
+bool Tex::LoadPixelsFromJPEG(const void* data, size_t dataSize, TexData& texData) {
+  LockSetjmpMutex();
+
+  struct jpeg_decompress_struct jpegInfo;
+  jpegErrorManager jerr;
+
+  jpegInfo.err = jpeg_std_error(&jerr.pub);
+  jerr.pub.error_exit = jpegErrorExit;
+
+  jpeg_create_decompress(&jpegInfo);
+
+  if(setjmp(jerr.setjmp_buffer)) {
+    // If we get here, the JPEG code has signaled an error.
+    texData = 0;
+    jpeg_destroy_decompress(&jpegInfo);
+    UnlockSetjmpMutex();
+    return false;
+  }
+
+  jpeg_mem_src(&jpegInfo, (const unsigned char*) data, dataSize);
+  int result = jpeg_read_header(&jpegInfo, FALSE);
+  jpeg_start_decompress(&jpegInfo);
+
+  texData.w = jpegInfo.output_width;
+  texData.h = jpegInfo.output_height;
+
+  if(texData.w == 0 || texData.h == 0) {
+    texData = 0;
+    jpeg_destroy_decompress(&jpegInfo);
+    UnlockSetjmpMutex();
+    return false;
+  }
+
+  u32 bitDepth = jpegInfo.data_precision;
+  u32 channelSize = (bitDepth >> 3) + ((bitDepth & 0x7) != 0 ? 1 : 0);
+
+  bool hasR = false;
+  bool hasG = false;
+  bool hasB = false;
+  bool hasA = false;
+
+  if(jpegInfo.num_components == 1) {
+    hasR = true;
+  }
+  else if(jpegInfo.num_components == 2) {
+    hasR = true;
+    hasG = true;
+  }
+  else if(jpegInfo.num_components == 3) {
+    hasR = true;
+    hasG = true;
+    hasB = true;
+  }
+  else {
+    hasR = true;
+    hasG = true;
+    hasB = true;
+    hasA = true;
+  }
+
+  u32 pixelSize = 0;
+  if(hasR)
+    pixelSize++;
+  if(hasG)
+    pixelSize++;
+  if(hasB)
+    pixelSize++;
+  if(hasA)
+    pixelSize++;
+
+  if(pixelSize == 4) {
+    texData.format = TexFormatNative;
+    texData.formatName = "R8G8B8A8_sRGB";
+  }
+  else if(pixelSize == 3) {
+    texData.format = TexFormatNative;
+    texData.formatName = "R8G8B8_sRGB";
+  }
+  else if(pixelSize == 2) {
+    texData.format = TexFormatR8G8;
+  }
+  else if(pixelSize == 1) {
+    texData.format = TexFormatR8;
+  }
+  else {
+    texData = 0;
+    jpeg_destroy_decompress(&jpegInfo);
+    dbgprintf("[Warning] Unsupported pixel size for texture format.");
+    UnlockSetjmpMutex();
+    return false;
+  }
+
+  texData.tw = (u32) GetNextPowerOf2(texData.w);
+  texData.th = (u32) GetNextPowerOf2(texData.h);
+  texData.mu = texData.tw > 0 ? (texData.w / (f32) texData.tw) : 0.0f;
+  texData.mv = texData.th > 0 ? (texData.h / (f32) texData.th) : 0.0f;
+
+  size_t dataStride = texData.tw * pixelSize;
+  size_t pixelsSize = texData.th * dataStride;
+  texData.pixels = new BlockBuffer(dataStride, pixelsSize);
+
+  while(jpegInfo.output_scanline < jpegInfo.output_height) {
+    void* row = texData.pixels->GetAddr(jpegInfo.output_scanline * dataStride);
+    if(row) {
+      u8* rows[1] = {(u8*) row};
+      jpeg_read_scanlines(&jpegInfo, rows, 1);
+    }
+  }
+
+  jpeg_destroy_decompress(&jpegInfo);
+
+  UnlockSetjmpMutex();
 
   return true;
 }
@@ -1367,4 +1524,10 @@ void ReadPNGData(png_structp png, png_bytep data, png_size_t size) {
   }
 
   dr->pos += readSize;
+}
+
+static void jpegErrorExit(j_common_ptr cinfo) {
+  jpegErrorManager* myerr = (jpegErrorManager*) cinfo->err;
+  (*(cinfo->err->format_message)) (cinfo, jpegLastErrorMsg);
+  longjmp(myerr->setjmp_buffer, 1);
 }

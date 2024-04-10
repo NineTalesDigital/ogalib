@@ -373,68 +373,17 @@ bool ImagemapContent::Load(const json& data, const json& info) {
 }
 
 bool ImagemapContent::Load(const void* data, size_t dataSize, const json& info) {
-  if(IsFormatPNG(data, dataSize, info)) {
+  if(IsFormatBC(data, dataSize, info)) {
+    return LoadFromBC(data, dataSize, info);
+  }
+  else if(IsFormatPNG(data, dataSize, info)) {
     return LoadFromPNG(data, dataSize, info);
   }
-  else if(IsFormatBC(data, dataSize, info)) {
-    return LoadFromBC(data, dataSize, info);
+  else if(IsFormatJPEG(data, dataSize, info)) {
+    return LoadFromJPEG(data, dataSize, info);
   }
 
   return false;
-}
-
-bool ImagemapContent::LoadFromPNG(const void* data, size_t dataSize, const json& info) {
-  if(data == nullptr || dataSize == 0)
-    return false;
-
-  TexData texData;
-
-  if(!Tex::LoadPixelsFromPNG(data, dataSize, texData))
-    return false;
-
-  std::string dataCopy((const char*) data, dataSize);
-  u32 w = texData.w;
-  u32 h = texData.h;
-
-  const size_t rectIndex = 0;
-  rectCount = 1;
-  rects = new ImagemapContentRect[rectCount];
-  if(rects) {
-    ImagemapContentRect& rect = rects[rectIndex];
-
-    rect.w = w;
-    rect.h = h;
-    rect.sx = 0;
-    rect.sy = 0;
-    rect.dw = w;
-    rect.dh = h;
-
-    rect.colorScaleR = 1.0f;
-    rect.colorScaleG = 1.0f;
-    rect.colorScaleB = 1.0f;
-    rect.colorScaleA = 1.0f;
-
-    rectLookup[rect.name] = rectIndex;
-  }
-
-  texRects = new ImagemapContentTexRect[rectCount];
-  if(texRects) {
-    ImagemapContentTexRect& texRect = texRects[rectIndex];
-    texRect.x = 0;
-    texRect.y = 0;
-    texRect.w = w;
-    texRect.h = h;
-  }
-
-  wrapModeX = WrapModeNone;
-  wrapModeY = WrapModeNone;
-
-  new Job(nullptr, [=](Job& job) {
-    tex = Tex::Create();
-    tex->AddTexData("", dataCopy, info);
-  });
-
-  return true;
 }
 
 bool ImagemapContent::LoadFromBC(const void* data, size_t dataSize, const json& info) {
@@ -499,6 +448,114 @@ bool ImagemapContent::LoadFromBC(const void* data, size_t dataSize, const json& 
   new Job(nullptr, [=](Job& job) {
     tex = Tex::Create();
     tex->AddTexData("", dataCopy, info);
+  });
+
+  return true;
+}
+
+bool ImagemapContent::LoadFromPNG(const void* data, size_t dataSize, const json& info) {
+  if(data == nullptr || dataSize == 0)
+    return false;
+
+  TexData texData;
+
+  if(!Tex::LoadPixelsFromPNG(data, dataSize, texData))
+    return false;
+
+  std::string dataCopy((const char*) data, dataSize);
+  u32 w = texData.w;
+  u32 h = texData.h;
+
+  const size_t rectIndex = 0;
+  rectCount = 1;
+  rects = new ImagemapContentRect[rectCount];
+  if(rects) {
+    ImagemapContentRect& rect = rects[rectIndex];
+
+    rect.w = w;
+    rect.h = h;
+    rect.sx = 0;
+    rect.sy = 0;
+    rect.dw = w;
+    rect.dh = h;
+
+    rect.colorScaleR = 1.0f;
+    rect.colorScaleG = 1.0f;
+    rect.colorScaleB = 1.0f;
+    rect.colorScaleA = 1.0f;
+
+    rectLookup[rect.name] = rectIndex;
+  }
+
+  texRects = new ImagemapContentTexRect[rectCount];
+  if(texRects) {
+    ImagemapContentTexRect& texRect = texRects[rectIndex];
+    texRect.x = 0;
+    texRect.y = 0;
+    texRect.w = w;
+    texRect.h = h;
+  }
+
+  wrapModeX = WrapModeNone;
+  wrapModeY = WrapModeNone;
+
+  new Job(nullptr, [=](Job& job) {
+    tex = Tex::Create();
+    tex->AddTexData("", texData);
+  });
+
+  return true;
+}
+
+bool ImagemapContent::LoadFromJPEG(const void* data, size_t dataSize, const json& info) {
+  if(data == nullptr || dataSize == 0)
+    return false;
+
+  TexData texData;
+
+  if(!Tex::LoadPixelsFromJPEG(data, dataSize, texData))
+    return false;
+
+  std::string dataCopy((const char*) data, dataSize);
+  u32 w = texData.w;
+  u32 h = texData.h;
+
+  const size_t rectIndex = 0;
+  rectCount = 1;
+  rects = new ImagemapContentRect[rectCount];
+  if(rects) {
+    ImagemapContentRect& rect = rects[rectIndex];
+
+    rect.w = w;
+    rect.h = h;
+    rect.sx = 0;
+    rect.sy = 0;
+    rect.dw = w;
+    rect.dh = h;
+
+    rect.colorScaleR = 1.0f;
+    rect.colorScaleG = 1.0f;
+    rect.colorScaleB = 1.0f;
+    rect.colorScaleA = 1.0f;
+
+    rectLookup[rect.name] = rectIndex;
+  }
+
+  texRects = new ImagemapContentTexRect[rectCount];
+  if(texRects) {
+    ImagemapContentTexRect& texRect = texRects[rectIndex];
+    texRect.x = 0;
+    texRect.y = 0;
+    texRect.w = w;
+    texRect.h = h;
+  }
+
+  wrapModeX = WrapModeNone;
+  wrapModeY = WrapModeNone;
+
+  new Job(nullptr, [=](Job& job) {
+    tex = Tex::Create();
+    tex->AddTexData("", texData);
   });
 
   return true;

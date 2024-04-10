@@ -399,6 +399,7 @@ public:
 
   virtual void AddTexData(const std::string& name, const std::string& data);
   virtual void AddTexData(const std::string& name, const std::string& data, const json& info);
+  virtual void AddTexData(const std::string& name, const TexData& data);
   virtual void RemoveTexData(const std::string& name);
   virtual void RemoveAllTexData();
 
@@ -438,6 +439,7 @@ public:
 
   static size_t GetPixelSize(TexFormat format);
   static bool LoadPixelsFromPNG(const void* data, size_t dataSize, TexData& texData);
+  static bool LoadPixelsFromJPEG(const void* data, size_t dataSize, TexData& texData);
 
 protected:
 

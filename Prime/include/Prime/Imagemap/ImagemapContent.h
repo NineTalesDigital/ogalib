@@ -182,8 +182,9 @@ public:
 
   bool Load(const json& data, const json& info) override;
   bool Load(const void* data, size_t dataSize, const json& info) override;
-  virtual bool LoadFromPNG(const void* data, size_t dataSize, const json& info);
   virtual bool LoadFromBC(const void* data, size_t dataSize, const json& info);
+  virtual bool LoadFromPNG(const void* data, size_t dataSize, const json& info);
+  virtual bool LoadFromJPEG(const void* data, size_t dataSize, const json& info);
 
   virtual u32 GetRectW(size_t index = 0) const;
   virtual u32 GetRectH(size_t index = 0) const;
